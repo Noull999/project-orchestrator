@@ -131,27 +131,44 @@ def prepare_project(project_root: Path) -> None:
         run_command(["git", "commit", "-m", "Initial commit"], cwd=project_root)
 
 
+def _slugify(name: str) -> str:
+    """Convierte un nombre de proyecto en un slug válido para archivos."""
+    name = name.lower().strip()
+    name = re.sub(r"[^a-z0-9]+", "-", name)
+    return name.strip("-") or "project"
+
+
 def scaffold_project(project_root: Path, stack_doc: str) -> None:
     """Crea un scaffold mínimo según el stack detectado para ayudar al Coding Agent."""
     print("\n[orchestrator] Creando scaffold inicial según stack...")
-    lower = stack_doc.lower()
+
+    # Busca 'fastapi'/'express' solo dentro de la sección recomendada para evitar falsos positivos
+    section_match = re.search(
+        r"^##\s*Stack recomendado\s*\n(.*?)\n(?=^##|\Z)",
+        stack_doc,
+        re.DOTALL | re.IGNORECASE | re.MULTILINE,
+    )
+    search_area = section_match.group(1) if section_match else stack_doc
+    lower = search_area.lower()
 
     is_fastapi = "fastapi" in lower and "python" in lower
     is_express = "express" in lower and "node" in lower
 
+    project_name = _slugify(project_root.name)
+
     if is_fastapi:
-        _scaffold_fastapi(project_root)
+        _scaffold_fastapi(project_root, project_name)
     elif is_express:
-        _scaffold_express(project_root)
+        _scaffold_express(project_root, project_name)
     else:
         print("  [orchestrator] no hay scaffold predefinido para este stack, se deja al Coding Agent")
 
 
-def _scaffold_fastapi(project_root: Path) -> None:
+def _scaffold_fastapi(project_root: Path, project_name: str) -> None:
     """Crea scaffold mínimo para FastAPI."""
     files = {
-        "pyproject.toml": """[project]
-name = "task-api"
+        "pyproject.toml": f"""[project]
+name = "{project_name}"
 version = "0.1.0"
 description = "API generada por Project Orchestrator"
 requires-python = ">=3.11"
@@ -170,13 +187,13 @@ dev = ["pytest", "httpx", "pytest-cov"]
 testpaths = ["tests"]
 """,
         "app/__init__.py": "",
-        "app/main.py": """from fastapi import FastAPI
+        "app/main.py": f"""from fastapi import FastAPI
 
-app = FastAPI(title="Task API")
+app = FastAPI(title="{project_name}")
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {{"status": "ok"}}
 """,
         "tests/__init__.py": "",
         "tests/test_health.py": """from fastapi.testclient import TestClient
@@ -200,26 +217,26 @@ def test_health():
     print("  [orchestrator] scaffold FastAPI creado")
 
 
-def _scaffold_express(project_root: Path) -> None:
+def _scaffold_express(project_root: Path, project_name: str) -> None:
     """Crea scaffold mínimo para Express/Node.js."""
     files = {
-        "package.json": """{
-  "name": "task-api",
+        "package.json": f"""{{
+  "name": "{project_name}",
   "version": "0.1.0",
   "description": "API generada por Project Orchestrator",
   "main": "src/index.js",
-  "scripts": {
+  "scripts": {{
     "start": "node src/index.js",
     "test": "jest"
-  },
-  "dependencies": {
+  }},
+  "dependencies": {{
     "express": "^4.18.0"
-  },
-  "devDependencies": {
+  }},
+  "devDependencies": {{
     "jest": "^29.0.0",
     "supertest": "^6.3.0"
-  }
-}""",
+  }}
+}}""",
         "src/index.js": """const express = require('express');
 const app = express();
 app.use(express.json());
