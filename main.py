@@ -19,8 +19,40 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-SCOPING_AGENT = Path("/root/project-scoping-agent")
-CODING_AGENT = Path("/root/coding-agent")
+SCOPING_AGENT_PATH = os.environ.get("SCOPING_AGENT_PATH", "/root/project-scoping-agent")
+CODING_AGENT_PATH = os.environ.get("CODING_AGENT_PATH", "/root/coding-agent")
+SCOPING_AGENT = Path(SCOPING_AGENT_PATH)
+CODING_AGENT = Path(CODING_AGENT_PATH)
+
+
+def validate_agent_paths() -> None:
+    """Verifica que las rutas configuradas para los agentes existan."""
+    missing = []
+    for name, path in (
+        ("SCOPING_AGENT_PATH", SCOPING_AGENT),
+        ("CODING_AGENT_PATH", CODING_AGENT),
+    ):
+        if not path.exists():
+            missing.append((name, path))
+    if missing:
+        lines = "\n".join(f"  - {name}={path} no existe" for name, path in missing)
+        raise FileNotFoundError(f"Rutas de agentes no encontradas:\n{lines}")
+
+
+def load_existing_scoping(output_dir: Path) -> dict | None:
+    """Reutiliza documentos de scoping previos si existen."""
+    docs_dir = output_dir / "scoping"
+    if not docs_dir.exists():
+        return None
+    docs = {f.name: f for f in docs_dir.glob("*.md")}
+    if not docs:
+        return None
+    print("\n[orchestrator] 1/4 Reutilizando documentos de scoping existentes...")
+    print(f"  [orchestrator] {len(docs)} documentos encontrados en {docs_dir}")
+    return {
+        "docs_dir": docs_dir,
+        "documents": docs,
+    }
 
 
 def run_command(cmd: list, cwd: Path = None, timeout: int = 600) -> subprocess.CompletedProcess:
@@ -65,18 +97,28 @@ def extract_phase1_prompt(prompts_path: Path) -> str:
     print("\n[orchestrator] 2/4 Extrayendo prompt de Fase 1...")
     content = prompts_path.read_text(encoding="utf-8")
 
-    # Busca la sección ## Prompt para Fase 1 (MVP)
+    # Busca variantes del heading de la Fase 1: "Fase 1", "Phase 1", "MVP", etc.
     match = re.search(
-        r"##\s*Prompt para Fase 1.*?\n(.*?)\n##\s*Prompts para fases posteriores",
+        r"^(?:##\s*(?:Prompt\s+(?:para\s+)?)?(?:Fase|Phase)\s*1|##\s*MVP)\b.*?\n"
+        r"(.*?)(?=^##|\Z)",
         content,
-        re.DOTALL | re.IGNORECASE,
+        re.DOTALL | re.IGNORECASE | re.MULTILINE,
     )
     if match:
         prompt = match.group(1).strip()
     else:
         # Fallback: toma todo desde la primera sección ## Prompt
-        match = re.search(r"##\s*Prompt.*?\n(.*)", content, re.DOTALL | re.IGNORECASE)
-        prompt = match.group(1).strip() if match else content
+        match = re.search(
+            r"^##\s*Prompt.*?\n(.*)",
+            content,
+            re.DOTALL | re.IGNORECASE | re.MULTILINE,
+        )
+        if match:
+            prompt = match.group(1).strip()
+            print("  [WARN] No se detectó heading de Fase 1; se usó la primera sección ## Prompt")
+        else:
+            prompt = content.strip()
+            print("  [WARN] No se detectó heading de Fase 1 ni sección ## Prompt; se usa el documento completo")
 
     # Limpia bloques de código markdown si los hay
     prompt = re.sub(r"```markdown\n?|```\n?", "", prompt).strip()
@@ -105,27 +147,44 @@ def prepare_project(project_root: Path) -> None:
         run_command(["git", "commit", "-m", "Initial commit"], cwd=project_root)
 
 
+def _slugify(name: str) -> str:
+    """Convierte un nombre de proyecto en un slug válido para archivos."""
+    name = name.lower().strip()
+    name = re.sub(r"[^a-z0-9]+", "-", name)
+    return name.strip("-") or "project"
+
+
 def scaffold_project(project_root: Path, stack_doc: str) -> None:
     """Crea un scaffold mínimo según el stack detectado para ayudar al Coding Agent."""
     print("\n[orchestrator] Creando scaffold inicial según stack...")
-    lower = stack_doc.lower()
+
+    # Busca 'fastapi'/'express' solo dentro de la sección recomendada para evitar falsos positivos
+    section_match = re.search(
+        r"^##\s*Stack recomendado\s*\n(.*?)\n(?=^##|\Z)",
+        stack_doc,
+        re.DOTALL | re.IGNORECASE | re.MULTILINE,
+    )
+    search_area = section_match.group(1) if section_match else stack_doc
+    lower = search_area.lower()
 
     is_fastapi = "fastapi" in lower and "python" in lower
     is_express = "express" in lower and "node" in lower
 
+    project_name = _slugify(project_root.name)
+
     if is_fastapi:
-        _scaffold_fastapi(project_root)
+        _scaffold_fastapi(project_root, project_name)
     elif is_express:
-        _scaffold_express(project_root)
+        _scaffold_express(project_root, project_name)
     else:
         print("  [orchestrator] no hay scaffold predefinido para este stack, se deja al Coding Agent")
 
 
-def _scaffold_fastapi(project_root: Path) -> None:
+def _scaffold_fastapi(project_root: Path, project_name: str) -> None:
     """Crea scaffold mínimo para FastAPI."""
     files = {
-        "pyproject.toml": """[project]
-name = "task-api"
+        "pyproject.toml": f"""[project]
+name = "{project_name}"
 version = "0.1.0"
 description = "API generada por Project Orchestrator"
 requires-python = ">=3.11"
@@ -144,13 +203,13 @@ dev = ["pytest", "httpx", "pytest-cov"]
 testpaths = ["tests"]
 """,
         "app/__init__.py": "",
-        "app/main.py": """from fastapi import FastAPI
+        "app/main.py": f"""from fastapi import FastAPI
 
-app = FastAPI(title="Task API")
+app = FastAPI(title="{project_name}")
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {{"status": "ok"}}
 """,
         "tests/__init__.py": "",
         "tests/test_health.py": """from fastapi.testclient import TestClient
@@ -174,26 +233,26 @@ def test_health():
     print("  [orchestrator] scaffold FastAPI creado")
 
 
-def _scaffold_express(project_root: Path) -> None:
+def _scaffold_express(project_root: Path, project_name: str) -> None:
     """Crea scaffold mínimo para Express/Node.js."""
     files = {
-        "package.json": """{
-  "name": "task-api",
+        "package.json": f"""{{
+  "name": "{project_name}",
   "version": "0.1.0",
   "description": "API generada por Project Orchestrator",
   "main": "src/index.js",
-  "scripts": {
+  "scripts": {{
     "start": "node src/index.js",
     "test": "jest"
-  },
-  "dependencies": {
+  }},
+  "dependencies": {{
     "express": "^4.18.0"
-  },
-  "devDependencies": {
+  }},
+  "devDependencies": {{
     "jest": "^29.0.0",
     "supertest": "^6.3.0"
-  }
-}""",
+  }}
+}}""",
         "src/index.js": """const express = require('express');
 const app = express();
 app.use(express.json());
@@ -334,15 +393,23 @@ def main():
     parser.add_argument("--brief", "-b", required=True, help="Descripción de la idea/proyecto")
     parser.add_argument("--project", "-p", required=True, help="Carpeta del proyecto a crear/usar")
     parser.add_argument("--output", "-o", default="/tmp/orchestrator-output", help="Carpeta de salida")
+    parser.add_argument(
+        "--force-scoping",
+        action="store_true",
+        help="Regenerar los documentos de scoping aunque ya existan",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output)
     project_root = Path(args.project).expanduser().resolve()
 
+    validate_agent_paths()
     prepare_project(project_root)
 
-    # 1. Scoping
-    scoping_info = run_scoping_agent(args.brief, output_dir)
+    # 1. Scoping (reutiliza si ya existe, salvo que se pida forzar)
+    scoping_info = None if args.force_scoping else load_existing_scoping(output_dir)
+    if scoping_info is None:
+        scoping_info = run_scoping_agent(args.brief, output_dir)
 
     # 2. Extraer prompt de Fase 1
     prompts_path = scoping_info["docs_dir"] / "07-prompts.md"
