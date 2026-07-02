@@ -1,0 +1,2 @@
+# El orquestador usa los agents instalados localmente
+# No requiere dependencias extra por ahora
