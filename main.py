@@ -81,18 +81,28 @@ def extract_phase1_prompt(prompts_path: Path) -> str:
     print("\n[orchestrator] 2/4 Extrayendo prompt de Fase 1...")
     content = prompts_path.read_text(encoding="utf-8")
 
-    # Busca la sección ## Prompt para Fase 1 (MVP)
+    # Busca variantes del heading de la Fase 1: "Fase 1", "Phase 1", "MVP", etc.
     match = re.search(
-        r"##\s*Prompt para Fase 1.*?\n(.*?)\n##\s*Prompts para fases posteriores",
+        r"^(?:##\s*(?:Prompt\s+(?:para\s+)?)?(?:Fase|Phase)\s*1|##\s*MVP)\b.*?\n"
+        r"(.*?)(?=^##|\Z)",
         content,
-        re.DOTALL | re.IGNORECASE,
+        re.DOTALL | re.IGNORECASE | re.MULTILINE,
     )
     if match:
         prompt = match.group(1).strip()
     else:
         # Fallback: toma todo desde la primera sección ## Prompt
-        match = re.search(r"##\s*Prompt.*?\n(.*)", content, re.DOTALL | re.IGNORECASE)
-        prompt = match.group(1).strip() if match else content
+        match = re.search(
+            r"^##\s*Prompt.*?\n(.*)",
+            content,
+            re.DOTALL | re.IGNORECASE | re.MULTILINE,
+        )
+        if match:
+            prompt = match.group(1).strip()
+            print("  [WARN] No se detectó heading de Fase 1; se usó la primera sección ## Prompt")
+        else:
+            prompt = content.strip()
+            print("  [WARN] No se detectó heading de Fase 1 ni sección ## Prompt; se usa el documento completo")
 
     # Limpia bloques de código markdown si los hay
     prompt = re.sub(r"```markdown\n?|```\n?", "", prompt).strip()
