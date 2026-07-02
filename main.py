@@ -39,6 +39,22 @@ def validate_agent_paths() -> None:
         raise FileNotFoundError(f"Rutas de agentes no encontradas:\n{lines}")
 
 
+def load_existing_scoping(output_dir: Path) -> dict | None:
+    """Reutiliza documentos de scoping previos si existen."""
+    docs_dir = output_dir / "scoping"
+    if not docs_dir.exists():
+        return None
+    docs = {f.name: f for f in docs_dir.glob("*.md")}
+    if not docs:
+        return None
+    print("\n[orchestrator] 1/4 Reutilizando documentos de scoping existentes...")
+    print(f"  [orchestrator] {len(docs)} documentos encontrados en {docs_dir}")
+    return {
+        "docs_dir": docs_dir,
+        "documents": docs,
+    }
+
+
 def run_command(cmd: list, cwd: Path = None, timeout: int = 600) -> subprocess.CompletedProcess:
     """Ejecuta un comando y retorna el resultado."""
     print(f"  [cmd] {' '.join(cmd)}")
@@ -377,6 +393,11 @@ def main():
     parser.add_argument("--brief", "-b", required=True, help="Descripción de la idea/proyecto")
     parser.add_argument("--project", "-p", required=True, help="Carpeta del proyecto a crear/usar")
     parser.add_argument("--output", "-o", default="/tmp/orchestrator-output", help="Carpeta de salida")
+    parser.add_argument(
+        "--force-scoping",
+        action="store_true",
+        help="Regenerar los documentos de scoping aunque ya existan",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output)
@@ -385,8 +406,10 @@ def main():
     validate_agent_paths()
     prepare_project(project_root)
 
-    # 1. Scoping
-    scoping_info = run_scoping_agent(args.brief, output_dir)
+    # 1. Scoping (reutiliza si ya existe, salvo que se pida forzar)
+    scoping_info = None if args.force_scoping else load_existing_scoping(output_dir)
+    if scoping_info is None:
+        scoping_info = run_scoping_agent(args.brief, output_dir)
 
     # 2. Extraer prompt de Fase 1
     prompts_path = scoping_info["docs_dir"] / "07-prompts.md"
