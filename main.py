@@ -19,8 +19,24 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-SCOPING_AGENT = Path("/root/project-scoping-agent")
-CODING_AGENT = Path("/root/coding-agent")
+SCOPING_AGENT_PATH = os.environ.get("SCOPING_AGENT_PATH", "/root/project-scoping-agent")
+CODING_AGENT_PATH = os.environ.get("CODING_AGENT_PATH", "/root/coding-agent")
+SCOPING_AGENT = Path(SCOPING_AGENT_PATH)
+CODING_AGENT = Path(CODING_AGENT_PATH)
+
+
+def validate_agent_paths() -> None:
+    """Verifica que las rutas configuradas para los agentes existan."""
+    missing = []
+    for name, path in (
+        ("SCOPING_AGENT_PATH", SCOPING_AGENT),
+        ("CODING_AGENT_PATH", CODING_AGENT),
+    ):
+        if not path.exists():
+            missing.append((name, path))
+    if missing:
+        lines = "\n".join(f"  - {name}={path} no existe" for name, path in missing)
+        raise FileNotFoundError(f"Rutas de agentes no encontradas:\n{lines}")
 
 
 def run_command(cmd: list, cwd: Path = None, timeout: int = 600) -> subprocess.CompletedProcess:
@@ -339,6 +355,7 @@ def main():
     output_dir = Path(args.output)
     project_root = Path(args.project).expanduser().resolve()
 
+    validate_agent_paths()
     prepare_project(project_root)
 
     # 1. Scoping
