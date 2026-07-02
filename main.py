@@ -243,7 +243,7 @@ def run_coding_agent(issue: str, project_root: Path, output_dir: Path) -> dict:
         "--output", str(result_file),
         "--skip-pr",
     ]
-    result = run_command(cmd, cwd=CODING_AGENT, timeout=900)
+    result = run_command(cmd, cwd=CODING_AGENT, timeout=1800)
     print(result.stdout)
     if result.returncode != 0:
         print(result.stderr)
@@ -280,10 +280,15 @@ def collect_outputs(
         for f in delivery_docs_dir.glob("*.md"):
             shutil.copy(f, post_dir / f.name)
 
-    # Reporte del coding agent
-    coding_report = output_dir / "coding_report.md"
+    # Reporte del coding agent (nuevo nombre: coding_result.md)
+    coding_report = output_dir / "coding_result.md"
     if coding_report.exists():
         shutil.copy(coding_report, post_dir / "00-coding-report.md")
+
+    # Resultado JSON del coding agent
+    coding_json = output_dir / "coding_result.json"
+    if coding_json.exists():
+        shutil.copy(coding_json, post_dir / "01-coding-result.json")
 
     # Index final
     index = build_index(final_dir, scoping_info, coding_result)
