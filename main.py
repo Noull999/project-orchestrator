@@ -47,6 +47,9 @@ def load_existing_scoping(output_dir: Path) -> dict | None:
     docs = {f.name: f for f in docs_dir.glob("*.md")}
     if not docs:
         return None
+    if "07-prompts.md" not in docs:
+        print(f"\n[orchestrator] Scoping previo incompleto en {docs_dir} (falta 07-prompts.md), se regenera")
+        return None
     print("\n[orchestrator] 1/4 Reutilizando documentos de scoping existentes...")
     print(f"  [orchestrator] {len(docs)} documentos encontrados en {docs_dir}")
     return {
