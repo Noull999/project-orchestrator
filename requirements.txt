@@ -1,2 +1,4 @@
 # El orquestador usa los agents instalados localmente
-# No requiere dependencias extra por ahora
+# No requiere dependencias extra por ahora, salvo pytest para tests
+
+pytest

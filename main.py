@@ -39,6 +39,24 @@ def validate_agent_paths() -> None:
         raise FileNotFoundError(f"Rutas de agentes no encontradas:\n{lines}")
 
 
+def load_scoping_contract(docs_dir: Path) -> dict | None:
+    """Carga el contrato estructurado scoping.json si el Scoping Agent lo generó.
+
+    Trae phase1_prompt ya extraído y stack_hints (language/framework) sin
+    necesidad de re-parsear el markdown con regex acá. Si no existe (versión
+    vieja del Scoping Agent, o corrida manual sin este archivo), se retorna
+    None y el llamador cae al fallback de parseo de markdown.
+    """
+    contract_path = docs_dir / "scoping.json"
+    if not contract_path.exists():
+        return None
+    try:
+        return json.loads(contract_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"  [WARN] No se pudo leer scoping.json ({e}), se usa fallback de markdown")
+        return None
+
+
 def load_existing_scoping(output_dir: Path) -> dict | None:
     """Reutiliza documentos de scoping previos si existen."""
     docs_dir = output_dir / "scoping"
@@ -55,6 +73,7 @@ def load_existing_scoping(output_dir: Path) -> dict | None:
     return {
         "docs_dir": docs_dir,
         "documents": docs,
+        "contract": load_scoping_contract(docs_dir),
     }
 
 
@@ -92,12 +111,18 @@ def run_scoping_agent(brief: str, output_dir: Path) -> dict:
     return {
         "docs_dir": docs_dir,
         "documents": docs,
+        "contract": load_scoping_contract(docs_dir),
     }
 
 
 def extract_phase1_prompt(prompts_path: Path) -> str:
-    """Extrae el prompt de la Fase 1 (MVP) desde 07-prompts.md."""
-    print("\n[orchestrator] 2/4 Extrayendo prompt de Fase 1...")
+    """Extrae el prompt de la Fase 1 (MVP) desde 07-prompts.md.
+
+    Fallback de compatibilidad: se usa solo si el Scoping Agent no generó
+    scoping.json (versión vieja, o el archivo se perdió/corrompió). Cuando
+    existe scoping.json, main() usa directamente su campo phase1_prompt.
+    """
+    print("\n[orchestrator] 2/4 Extrayendo prompt de Fase 1 (fallback markdown)...")
     content = prompts_path.read_text(encoding="utf-8")
 
     # Busca variantes del heading de la Fase 1: "Fase 1", "Phase 1", "MVP", etc.
@@ -157,9 +182,29 @@ def _slugify(name: str) -> str:
     return name.strip("-") or "project"
 
 
+def scaffold_project_from_hints(project_root: Path, stack_hints: dict) -> None:
+    """Crea el scaffold usando los hints estructurados de scoping.json (sin regex sobre markdown)."""
+    print("\n[orchestrator] Creando scaffold inicial según stack (contrato scoping.json)...")
+    language = stack_hints.get("language")
+    framework = stack_hints.get("framework")
+    project_name = _slugify(project_root.name)
+
+    if language == "python" and framework == "fastapi":
+        _scaffold_fastapi(project_root, project_name)
+    elif language == "node" and framework == "express":
+        _scaffold_express(project_root, project_name)
+    else:
+        print(f"  [orchestrator] no hay scaffold predefinido para {language}/{framework}, se deja al Coding Agent")
+
+
 def scaffold_project(project_root: Path, stack_doc: str) -> None:
-    """Crea un scaffold mínimo según el stack detectado para ayudar al Coding Agent."""
-    print("\n[orchestrator] Creando scaffold inicial según stack...")
+    """Crea un scaffold mínimo según el stack detectado para ayudar al Coding Agent.
+
+    Fallback de compatibilidad: se usa solo si scoping.json no trae stack_hints
+    (versión vieja del Scoping Agent). Cuando hay hints, se usa
+    scaffold_project_from_hints en su lugar.
+    """
+    print("\n[orchestrator] Creando scaffold inicial según stack (fallback markdown)...")
 
     # Busca 'fastapi'/'express' solo dentro de la sección recomendada para evitar falsos positivos
     section_match = re.search(
@@ -414,17 +459,27 @@ def main():
     if scoping_info is None:
         scoping_info = run_scoping_agent(args.brief, output_dir)
 
-    # 2. Extraer prompt de Fase 1
-    prompts_path = scoping_info["docs_dir"] / "07-prompts.md"
-    phase1_prompt = extract_phase1_prompt(prompts_path)
+    # 2. Obtener prompt de Fase 1: preferir el contrato estructurado scoping.json;
+    #    si no existe, caer al parseo por regex del markdown (ver extract_phase1_prompt).
+    contract = scoping_info.get("contract")
+    if contract and contract.get("phase1_prompt"):
+        print("\n[orchestrator] 2/4 Usando phase1_prompt del contrato scoping.json")
+        phase1_prompt = contract["phase1_prompt"]
+    else:
+        prompts_path = scoping_info["docs_dir"] / "07-prompts.md"
+        phase1_prompt = extract_phase1_prompt(prompts_path)
 
     # Guardar el prompt que se le pasará al Coding Agent
     (output_dir / "phase1_prompt.txt").write_text(phase1_prompt, encoding="utf-8")
 
-    # 2.5 Crear scaffold según stack recomendado
-    stack_doc = scoping_info["documents"].get("04-stack.md")
-    if stack_doc:
-        scaffold_project(project_root, stack_doc.read_text(encoding="utf-8"))
+    # 2.5 Crear scaffold según stack recomendado: preferir hints del contrato
+    stack_hints = (contract or {}).get("stack_hints")
+    if stack_hints and stack_hints.get("language"):
+        scaffold_project_from_hints(project_root, stack_hints)
+    else:
+        stack_doc = scoping_info["documents"].get("04-stack.md")
+        if stack_doc:
+            scaffold_project(project_root, stack_doc.read_text(encoding="utf-8"))
 
     # 3. Coding Agent
     coding_result = run_coding_agent(phase1_prompt, project_root, output_dir)
