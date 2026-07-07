@@ -251,21 +251,90 @@ dev = ["pytest", "httpx", "pytest-cov"]
 testpaths = ["tests"]
 """,
         "app/__init__.py": "",
-        "app/main.py": f"""from fastapi import FastAPI
+        "app/db/__init__.py": "",
+        "app/db/database.py": """from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-app = FastAPI(title="{project_name}")
+SQLALCHEMY_DATABASE_URL = "sqlite:///./data/app.db"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+""",
+        "app/main.py": f"""from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from app.db.database import Base, engine
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
+app = FastAPI(title="{project_name}", lifespan=lifespan)
+
 
 @app.get("/health")
 def health_check():
     return {{"status": "ok"}}
 """,
         "tests/__init__.py": "",
+        "tests/conftest.py": """import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import StaticPool, create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.db.database import Base, get_db
+from app.main import app
+
+# StaticPool asegura que todas las conexiones compartan la misma DB en memoria.
+# Sin esto, TestClient y la fixture usarian conexiones distintas y las tablas
+# creadas por una no serian visibles por la otra.
+engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def override_get_db():
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture(scope="function")
+def client():
+    Base.metadata.create_all(bind=engine)
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+""",
         "tests/test_health.py": """from fastapi.testclient import TestClient
 from app.main import app
 
-client = TestClient(app)
 
-def test_health():
+def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
