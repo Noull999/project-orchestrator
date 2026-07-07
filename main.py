@@ -496,6 +496,25 @@ def main():
         prompts_path = scoping_info["docs_dir"] / "07-prompts.md"
         phase1_prompt = extract_phase1_prompt(prompts_path)
 
+    # Fallback robusto: si el Scoping Agent deja phase1_prompt vacío (por ejemplo,
+    # porque el LLM del prompt_engineer no respondió), armamos un prompt útil
+    # a partir del MVP y el stack, que son los documentos más relevantes.
+    if not phase1_prompt.strip():
+        print("\n[orchestrator] 2/4 phase1_prompt vacío; construyendo fallback desde MVP y stack...")
+        mvp_doc = scoping_info["documents"].get("06-mvp.md")
+        stack_doc = scoping_info["documents"].get("04-stack.md")
+        parts = [f"Brief: {args.brief}"]
+        if stack_doc:
+            parts.append(f"\nStack recomendado:\n{stack_doc.read_text(encoding='utf-8')}")
+        if mvp_doc:
+            parts.append(f"\nMVP y alcance:\n{mvp_doc.read_text(encoding='utf-8')}")
+        parts.append(
+            "\nImplementa el MVP completo descrito arriba. Genera el código, tests y "
+            "documentación necesarios para que el proyecto sea ejecutable y verificable."
+        )
+        phase1_prompt = "\n".join(parts)
+        print(f"  [orchestrator] Prompt fallback construido: {len(phase1_prompt)} chars")
+
     # Guardar el prompt que se le pasará al Coding Agent
     (output_dir / "phase1_prompt.txt").write_text(phase1_prompt, encoding="utf-8")
 
