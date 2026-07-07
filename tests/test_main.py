@@ -70,6 +70,56 @@ def test_slugify_project_name():
     assert main._slugify("") == "project"
 
 
+def test_validate_phase1_prompt_raises_on_empty():
+    import pytest
+
+    for empty in ("", "   ", "\n\t "):
+        with pytest.raises(RuntimeError, match="phase1_prompt vacío"):
+            main.validate_phase1_prompt(empty)
+
+
+def test_validate_phase1_prompt_ok_when_present():
+    # No debe lanzar
+    main.validate_phase1_prompt("Crea el MVP con login")
+
+
+def _fake_completed(returncode):
+    import subprocess
+
+    return subprocess.CompletedProcess(args=["x"], returncode=returncode, stdout="", stderr="")
+
+
+def test_run_coding_agent_tolerates_soft_failure(tmp_path, monkeypatch):
+    """exit != 0 pero con coding_result.json presente => entrega degradada, no crash."""
+    result_file = tmp_path / "coding_result.json"
+    result_file.write_text(json.dumps({"error": "Planner error: LLM vacío"}), encoding="utf-8")
+
+    monkeypatch.setattr(main, "run_command", lambda *a, **k: _fake_completed(1))
+
+    result = main.run_coding_agent("issue", tmp_path / "proj", tmp_path)
+    assert result["error"] == "Planner error: LLM vacío"
+
+
+def test_run_coding_agent_raises_on_hard_crash(tmp_path, monkeypatch):
+    """exit != 0 y sin coding_result.json => crash duro, se aborta."""
+    import pytest
+
+    monkeypatch.setattr(main, "run_command", lambda *a, **k: _fake_completed(1))
+
+    with pytest.raises(RuntimeError, match="sin producir resultado"):
+        main.run_coding_agent("issue", tmp_path / "proj", tmp_path)
+
+
+def test_run_coding_agent_success(tmp_path, monkeypatch):
+    result_file = tmp_path / "coding_result.json"
+    result_file.write_text(json.dumps({"test_result": {"summary": "PASS"}}), encoding="utf-8")
+
+    monkeypatch.setattr(main, "run_command", lambda *a, **k: _fake_completed(0))
+
+    result = main.run_coding_agent("issue", tmp_path / "proj", tmp_path)
+    assert result["test_result"]["summary"] == "PASS"
+
+
 def test_scaffold_project_detects_fastapi_only_in_recommended_section(tmp_path):
     project_root = tmp_path / "app"
     project_root.mkdir()

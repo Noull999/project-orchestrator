@@ -336,6 +336,21 @@ describe('GET /health', () => {
     print("  [orchestrator] scaffold Express creado")
 
 
+def validate_phase1_prompt(phase1_prompt: str) -> None:
+    """Aborta si el prompt de Fase 1 está vacío.
+
+    El Scoping Agent puede degradar prompt_engineer a vacío si el LLM falla; en
+    ese caso invocar al Coding Agent con una instrucción vacía solo generaría
+    código basura, así que se corta acá con un mensaje accionable.
+    """
+    if not phase1_prompt.strip():
+        raise RuntimeError(
+            "El Scoping Agent no produjo un prompt de Fase 1 utilizable "
+            "(phase1_prompt vacío). Se aborta antes de invocar al Coding Agent. "
+            "Revisá 07-prompts.md y el log del Scoping Agent."
+        )
+
+
 def run_coding_agent(issue: str, project_root: Path, output_dir: Path) -> dict:
     """Ejecuta el Coding Agent sobre el proyecto."""
     print("\n[orchestrator] 3/4 Ejecutando Coding Agent...")
@@ -353,8 +368,20 @@ def run_coding_agent(issue: str, project_root: Path, output_dir: Path) -> dict:
     result = run_command(cmd, cwd=CODING_AGENT, timeout=1800)
     print(result.stdout)
     if result.returncode != 0:
-        print(result.stderr)
-        raise RuntimeError(f"Coding Agent falló: {result.returncode}")
+        # El Coding Agent sale con código != 0 cuando un nodo reportó error.
+        # Si alcanzó a escribir coding_result.json es un fallo "blando" (entrega
+        # degradada, con el error ya documentado en el resultado): se continúa
+        # para armar la entrega igual. Si ni siquiera generó el archivo, es un
+        # crash duro y se aborta.
+        if not result_file.exists():
+            print(result.stderr)
+            raise RuntimeError(
+                f"Coding Agent falló sin producir resultado ({result.returncode})"
+            )
+        print(
+            f"  [WARN] Coding Agent terminó con código {result.returncode}; "
+            "se continúa con la entrega degradada (ver coding_result.json)"
+        )
 
     coding_result = json.loads(result_file.read_text(encoding="utf-8"))
 
@@ -472,6 +499,9 @@ def main():
     # Guardar el prompt que se le pasará al Coding Agent
     (output_dir / "phase1_prompt.txt").write_text(phase1_prompt, encoding="utf-8")
 
+    # Abortar si el prompt vino vacío, antes de invocar al Coding Agent.
+    validate_phase1_prompt(phase1_prompt)
+
     # 2.5 Crear scaffold según stack recomendado: preferir hints del contrato
     stack_hints = (contract or {}).get("stack_hints")
     if stack_hints and stack_hints.get("language"):
@@ -483,6 +513,9 @@ def main():
 
     # 3. Coding Agent
     coding_result = run_coding_agent(phase1_prompt, project_root, output_dir)
+    if coding_result.get("error"):
+        print(f"\n[orchestrator] ⚠ El Coding Agent reportó un error: {coding_result['error']}")
+        print("[orchestrator] Se arma igual la entrega con lo disponible (revisá 02-post-codigo).")
 
     # 4. Recolectar entrega
     final_dir = collect_outputs(output_dir, scoping_info, coding_result, project_root)
