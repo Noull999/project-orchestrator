@@ -70,6 +70,27 @@ def test_slugify_project_name():
     assert main._slugify("") == "project"
 
 
+def test_build_coding_issue_includes_brief_stack_and_mvp(tmp_path):
+    stack = tmp_path / "04-stack.md"
+    stack.write_text("## Stack recomendado\nPython con FastAPI", encoding="utf-8")
+    mvp = tmp_path / "06-mvp.md"
+    mvp.write_text("## MVP\nCRUD de tareas", encoding="utf-8")
+    scoping_info = {"documents": {"04-stack.md": stack, "06-mvp.md": mvp}}
+
+    issue = main._build_coding_issue("Una API de tareas", scoping_info)
+
+    assert "Brief: Una API de tareas" in issue
+    assert "Python con FastAPI" in issue
+    assert "CRUD de tareas" in issue
+    assert "Implementa el MVP" in issue
+
+
+def test_build_coding_issue_tolerates_missing_docs():
+    issue = main._build_coding_issue("Solo brief", {"documents": {}})
+    assert "Brief: Solo brief" in issue
+    assert "Implementa el MVP" in issue
+
+
 def test_validate_phase1_prompt_raises_on_empty():
     import pytest
 

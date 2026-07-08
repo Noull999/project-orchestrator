@@ -405,6 +405,30 @@ describe('GET /health', () => {
     print("  [orchestrator] scaffold Express creado")
 
 
+def _build_coding_issue(brief: str, scoping_info: dict) -> str:
+    """Construye un issue para el Coding Agent a partir del brief y los
+    documentos de scoping más accionables (stack y MVP).
+
+    Se usa como fallback cuando el Scoping Agent no dejó un phase1_prompt
+    utilizable: le da al Coding Agent el objetivo (brief), el stack a usar y el
+    alcance del MVP, que son los documentos más relevantes para implementar.
+    """
+    documents = scoping_info.get("documents", {})
+    stack_doc = documents.get("04-stack.md")
+    mvp_doc = documents.get("06-mvp.md")
+
+    parts = [f"Brief: {brief}"]
+    if stack_doc:
+        parts.append(f"\nStack recomendado:\n{stack_doc.read_text(encoding='utf-8')}")
+    if mvp_doc:
+        parts.append(f"\nMVP y alcance:\n{mvp_doc.read_text(encoding='utf-8')}")
+    parts.append(
+        "\nImplementa el MVP completo descrito arriba. Genera el código, tests y "
+        "documentación necesarios para que el proyecto sea ejecutable y verificable."
+    )
+    return "\n".join(parts)
+
+
 def validate_phase1_prompt(phase1_prompt: str) -> None:
     """Aborta si el prompt de Fase 1 está vacío.
 
@@ -575,18 +599,7 @@ def main():
     # a partir del MVP y el stack, que son los documentos más relevantes.
     if not phase1_prompt.strip():
         print("\n[orchestrator] 2/4 phase1_prompt vacío; construyendo fallback desde MVP y stack...")
-        mvp_doc = scoping_info["documents"].get("06-mvp.md")
-        stack_doc = scoping_info["documents"].get("04-stack.md")
-        parts = [f"Brief: {args.brief}"]
-        if stack_doc:
-            parts.append(f"\nStack recomendado:\n{stack_doc.read_text(encoding='utf-8')}")
-        if mvp_doc:
-            parts.append(f"\nMVP y alcance:\n{mvp_doc.read_text(encoding='utf-8')}")
-        parts.append(
-            "\nImplementa el MVP completo descrito arriba. Genera el código, tests y "
-            "documentación necesarios para que el proyecto sea ejecutable y verificable."
-        )
-        phase1_prompt = "\n".join(parts)
+        phase1_prompt = _build_coding_issue(args.brief, scoping_info)
         print(f"  [orchestrator] Prompt fallback construido: {len(phase1_prompt)} chars")
 
     # Guardar el prompt que se le pasará al Coding Agent
