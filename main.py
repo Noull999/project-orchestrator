@@ -426,30 +426,35 @@ def run_coding_agent(issue: str, project_root: Path, output_dir: Path) -> dict:
 
     result_file = output_dir / "coding_result.json"
 
+    # El issue puede ser muy largo (phase1_prompt completo). Para no truncar la
+    # linea de comando (ARG_MAX), lo escribimos a un archivo y pasamos --issue-file.
+    issue_file = output_dir / "issue.txt"
+    issue_file.write_text(issue, encoding="utf-8")
+
     cmd = [
         sys.executable,
         str(CODING_AGENT / "graph.py"),
         str(project_root),
-        "--issue", issue,
+        "--issue-file", str(issue_file),
         "--output", str(result_file),
         "--skip-pr",
     ]
     result = run_command(cmd, cwd=CODING_AGENT, timeout=1800)
     print(result.stdout)
     if result.returncode != 0:
-        # El Coding Agent sale con código != 0 cuando un nodo reportó error.
-        # Si alcanzó a escribir coding_result.json es un fallo "blando" (entrega
-        # degradada, con el error ya documentado en el resultado): se continúa
-        # para armar la entrega igual. Si ni siquiera generó el archivo, es un
+        # El Coding Agent sale con codigo != 0 cuando un nodo reporto error.
+        # Si alcanzo a escribir coding_result.json es un fallo "blando" (entrega
+        # degradada, con el error ya documentado en el resultado): se continua
+        # para armar la entrega igual. Si ni siquiera genero el archivo, es un
         # crash duro y se aborta.
         if not result_file.exists():
             print(result.stderr)
             raise RuntimeError(
-                f"Coding Agent falló sin producir resultado ({result.returncode})"
+                f"Coding Agent fallo sin producir resultado ({result.returncode})"
             )
         print(
-            f"  [WARN] Coding Agent terminó con código {result.returncode}; "
-            "se continúa con la entrega degradada (ver coding_result.json)"
+            f"  [WARN] Coding Agent termino con codigo {result.returncode}; "
+            "se continua con la entrega degradada (ver coding_result.json)"
         )
 
     coding_result = json.loads(result_file.read_text(encoding="utf-8"))
