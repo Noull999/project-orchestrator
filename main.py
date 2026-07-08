@@ -416,12 +416,13 @@ describe('GET /health', () => {
 
 
 def _build_coding_issue(brief: str, scoping_info: dict) -> str:
-    """Construye un issue para el Coding Agent a partir del brief y los
+    """Construye el issue para el Coding Agent a partir del brief y los
     documentos de scoping más accionables (stack y MVP).
 
-    Se usa como fallback cuando el Scoping Agent no dejó un phase1_prompt
-    utilizable: le da al Coding Agent el objetivo (brief), el stack a usar y el
-    alcance del MVP, que son los documentos más relevantes para implementar.
+    Es la fuente principal del issue: le da al Coding Agent el objetivo (brief),
+    el stack a usar y el alcance del MVP. Se prefiere sobre el phase1_prompt
+    curado por el prompt_engineer del scoping, que en la práctica salía de baja
+    calidad.
     """
     documents = scoping_info.get("documents", {})
     stack_doc = documents.get("04-stack.md")
@@ -594,29 +595,21 @@ def main():
     if scoping_info is None:
         scoping_info = run_scoping_agent(args.brief, output_dir)
 
-    # 2. Obtener prompt de Fase 1: preferir el contrato estructurado scoping.json;
-    #    si no existe, caer al parseo por regex del markdown (ver extract_phase1_prompt).
+    # 2. Construir el issue para el Coding Agent.
+    #    El phase1_prompt curado por el prompt_engineer del scoping salía de baja
+    #    calidad en la práctica, así que el issue se arma SIEMPRE desde el brief +
+    #    los documentos de scoping (stack y MVP), que son más concretos y
+    #    accionables para implementar. Ver _build_coding_issue.
     contract = scoping_info.get("contract")
-    if contract and contract.get("phase1_prompt"):
-        print("\n[orchestrator] 2/4 Usando phase1_prompt del contrato scoping.json")
-        phase1_prompt = contract["phase1_prompt"]
-    else:
-        prompts_path = scoping_info["docs_dir"] / "07-prompts.md"
-        phase1_prompt = extract_phase1_prompt(prompts_path)
+    print("\n[orchestrator] 2/4 Construyendo issue del Coding Agent desde brief + stack + MVP")
+    coding_issue = _build_coding_issue(args.brief, scoping_info)
+    print(f"  [orchestrator] Issue construido: {len(coding_issue)} chars")
 
-    # Fallback robusto: si el Scoping Agent deja phase1_prompt vacío (por ejemplo,
-    # porque el LLM del prompt_engineer no respondió), armamos un prompt útil
-    # a partir del MVP y el stack, que son los documentos más relevantes.
-    if not phase1_prompt.strip():
-        print("\n[orchestrator] 2/4 phase1_prompt vacío; construyendo fallback desde MVP y stack...")
-        phase1_prompt = _build_coding_issue(args.brief, scoping_info)
-        print(f"  [orchestrator] Prompt fallback construido: {len(phase1_prompt)} chars")
+    # Guardar el issue que se le pasará al Coding Agent (para inspección).
+    (output_dir / "phase1_prompt.txt").write_text(coding_issue, encoding="utf-8")
 
-    # Guardar el prompt que se le pasará al Coding Agent
-    (output_dir / "phase1_prompt.txt").write_text(phase1_prompt, encoding="utf-8")
-
-    # Abortar si el prompt vino vacío, antes de invocar al Coding Agent.
-    validate_phase1_prompt(phase1_prompt)
+    # Abortar si quedó vacío (no debería: el brief siempre está presente).
+    validate_phase1_prompt(coding_issue)
 
     # 2.5 Crear scaffold según stack recomendado: preferir hints del contrato
     stack_hints = (contract or {}).get("stack_hints")
@@ -628,7 +621,7 @@ def main():
             scaffold_project(project_root, stack_doc.read_text(encoding="utf-8"))
 
     # 3. Coding Agent
-    coding_result = run_coding_agent(phase1_prompt, project_root, output_dir)
+    coding_result = run_coding_agent(coding_issue, project_root, output_dir)
     if coding_result.get("error"):
         print(f"\n[orchestrator] ⚠ El Coding Agent reportó un error: {coding_result['error']}")
         print("[orchestrator] Se arma igual la entrega con lo disponible (revisá 02-post-codigo).")
