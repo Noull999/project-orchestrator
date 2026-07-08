@@ -252,10 +252,16 @@ testpaths = ["tests"]
 """,
         "app/__init__.py": "",
         "app/db/__init__.py": "",
-        "app/db/database.py": """from sqlalchemy import create_engine
+        "app/db/database.py": """import os
+from pathlib import Path
+
+from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./data/app.db"
+
+# Asegurar que el directorio de la base de datos exista
+Path(SQLALCHEMY_DATABASE_URL.replace("sqlite:///.", "")).parent.mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
@@ -344,6 +350,10 @@ def test_health(client):
         full = project_root / path
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
+
+    # Directorio para la base de datos SQLite de runtime
+    (project_root / "data").mkdir(exist_ok=True)
+    (project_root / "data" / ".gitkeep").write_text("", encoding="utf-8")
 
     run_command(["git", "add", "-A"], cwd=project_root)
     run_command(["git", "commit", "-m", "scaffold: estructura base FastAPI"], cwd=project_root)
