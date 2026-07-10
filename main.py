@@ -191,6 +191,10 @@ def scaffold_project_from_hints(project_root: Path, stack_hints: dict) -> None:
 
     if language == "python" and framework == "fastapi":
         _scaffold_fastapi(project_root, project_name)
+    elif language == "python" and framework == "flask":
+        _scaffold_flask(project_root, project_name)
+    elif language == "node" and framework == "nextjs":
+        _scaffold_nextjs(project_root, project_name)
     elif language == "node" and framework == "express":
         _scaffold_express(project_root, project_name)
     else:
@@ -216,12 +220,20 @@ def scaffold_project(project_root: Path, stack_doc: str) -> None:
     lower = search_area.lower()
 
     is_fastapi = "fastapi" in lower and "python" in lower
+    is_flask = "flask" in lower and "python" in lower
+    is_nextjs = any(k in lower for k in ("next.js", "nextjs", "next js"))
     is_express = "express" in lower and "node" in lower
 
     project_name = _slugify(project_root.name)
 
     if is_fastapi:
         _scaffold_fastapi(project_root, project_name)
+    elif is_flask:
+        _scaffold_flask(project_root, project_name)
+    elif is_nextjs:
+        # Next.js gana sobre express: un stack Next.js suele mencionar Node/Express
+        # para las API routes, pero la estructura del proyecto la define Next.
+        _scaffold_nextjs(project_root, project_name)
     elif is_express:
         _scaffold_express(project_root, project_name)
     else:
@@ -413,6 +425,128 @@ describe('GET /health', () => {
     run_command(["git", "add", "-A"], cwd=project_root)
     run_command(["git", "commit", "-m", "scaffold: estructura base Express"], cwd=project_root)
     print("  [orchestrator] scaffold Express creado")
+
+
+def _scaffold_flask(project_root: Path, project_name: str) -> None:
+    """Crea scaffold mínimo para Flask (app factory + tests)."""
+    files = {
+        "pyproject.toml": f"""[project]
+name = "{project_name}"
+version = "0.1.0"
+description = "App generada por Project Orchestrator"
+requires-python = ">=3.11"
+dependencies = [
+    "flask",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+""",
+        "app/__init__.py": """from flask import Flask
+
+
+def create_app() -> Flask:
+    app = Flask(__name__)
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    return app
+""",
+        "run.py": """from app import create_app
+
+app = create_app()
+
+if __name__ == "__main__":
+    app.run(debug=True)
+""",
+        "tests/__init__.py": "",
+        "tests/test_health.py": """from app import create_app
+
+
+def test_health():
+    client = create_app().test_client()
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "ok"}
+""",
+    }
+    for path, content in files.items():
+        full = project_root / path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+
+    run_command(["git", "add", "-A"], cwd=project_root)
+    run_command(["git", "commit", "-m", "scaffold: estructura base Flask"], cwd=project_root)
+    print("  [orchestrator] scaffold Flask creado")
+
+
+def _scaffold_nextjs(project_root: Path, project_name: str) -> None:
+    """Crea scaffold mínimo para Next.js (App Router, JS para no exigir tsconfig).
+
+    No corre npm install ni create-next-app: deja la estructura y deps
+    declaradas para que el Coding Agent trabaje sobre convenciones estándar.
+    """
+    files = {
+        "package.json": f"""{{
+  "name": "{project_name}",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {{
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  }},
+  "dependencies": {{
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }}
+}}""",
+        "app/layout.js": f"""export const metadata = {{
+  title: "{project_name}",
+  description: "App generada por Project Orchestrator",
+}};
+
+export default function RootLayout({{ children }}) {{
+  return (
+    <html lang="es">
+      <body>{{children}}</body>
+    </html>
+  );
+}}
+""",
+        "app/page.js": f"""export default function Home() {{
+  return (
+    <main>
+      <h1>{project_name}</h1>
+      <p>Proyecto generado por Project Orchestrator.</p>
+    </main>
+  );
+}}
+""",
+        "app/api/health/route.js": """export function GET() {
+  return Response.json({ status: "ok" });
+}
+""",
+        ".gitignore": """node_modules/
+.next/
+out/
+.env*.local
+""",
+    }
+    for path, content in files.items():
+        full = project_root / path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+
+    run_command(["git", "add", "-A"], cwd=project_root)
+    run_command(["git", "commit", "-m", "scaffold: estructura base Next.js"], cwd=project_root)
+    print("  [orchestrator] scaffold Next.js creado")
 
 
 def _build_coding_issue(brief: str, scoping_info: dict) -> str:
