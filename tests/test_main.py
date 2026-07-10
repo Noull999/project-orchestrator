@@ -57,6 +57,53 @@ def test_scaffold_project_from_hints_express(tmp_path):
     assert '"name": "my-service"' in (project_root / "package.json").read_text(encoding="utf-8")
 
 
+def test_scaffold_project_from_hints_flask(tmp_path):
+    project_root = tmp_path / "my-flask-app"
+    project_root.mkdir()
+    main.scaffold_project_from_hints(project_root, {"language": "python", "framework": "flask"})
+    assert (project_root / "app" / "__init__.py").exists()
+    assert "create_app" in (project_root / "app" / "__init__.py").read_text(encoding="utf-8")
+    assert 'name = "my-flask-app"' in (project_root / "pyproject.toml").read_text(encoding="utf-8")
+    assert (project_root / "tests" / "test_health.py").exists()
+
+
+def test_scaffold_project_from_hints_nextjs(tmp_path):
+    project_root = tmp_path / "my-next-app"
+    project_root.mkdir()
+    main.scaffold_project_from_hints(project_root, {"language": "node", "framework": "nextjs"})
+    assert (project_root / "app" / "page.js").exists()
+    assert (project_root / "app" / "api" / "health" / "route.js").exists()
+    pkg = (project_root / "package.json").read_text(encoding="utf-8")
+    assert '"name": "my-next-app"' in pkg
+    assert '"next"' in pkg
+
+
+def test_flask_scaffold_tests_actually_pass(tmp_path):
+    """El scaffold Flask debe ser ejecutable: sus propios tests pasan."""
+    import subprocess, sys
+
+    project_root = tmp_path / "flask-check"
+    project_root.mkdir()
+    main._scaffold_flask(project_root, "flask-check")
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/", "-q"],
+        cwd=project_root, capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_scaffold_project_markdown_detects_nextjs_over_express(tmp_path):
+    project_root = tmp_path / "next-md"
+    project_root.mkdir()
+    stack_doc = (
+        "## Stack recomendado\nNext.js con API routes en Node (estilo Express)\n"
+        "## Justificación\nTodo en uno."
+    )
+    main.scaffold_project(project_root, stack_doc)
+    assert (project_root / "app" / "page.js").exists()
+    assert not (project_root / "src" / "index.js").exists()  # no scaffold express
+
+
 def test_scaffold_project_from_hints_unknown_does_nothing(tmp_path):
     project_root = tmp_path / "unknown"
     project_root.mkdir()
